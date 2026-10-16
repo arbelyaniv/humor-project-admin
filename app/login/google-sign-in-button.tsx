@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AUTH_NEXT_COOKIE } from "@/lib/auth-next";
+import { getSiteOrigin } from "@/lib/site-url";
 
 export function GoogleSignInButton() {
   const searchParams = useSearchParams();
@@ -15,16 +16,37 @@ export function GoogleSignInButton() {
   async function signIn() {
     setPending(true);
     setError(null);
-    // redirectTo must exactly match an entry in Supabase's Redirect URLs
-    // allow-list; any query string makes it fall back to the Site URL (the
-    // main app). So the post-login destination travels in a short-lived
-    // cookie that /auth/callback reads, validates, and clears.
     const next = searchParams.get("next") ?? "/admin";
+
+    let siteOrigin: string;
+    try {
+      siteOrigin = getSiteOrigin();
+    } catch {
+      setError("NEXT_PUBLIC_SITE_URL is not a valid URL.");
+      setPending(false);
+      return;
+    }
+
+    // The PKCE verifier and session cookies are per-origin, so sign-in must
+    // start on the same origin the callback returns to. If this page was
+    // opened on another hostname (e.g. a Vercel deployment URL), move to the
+    // canonical one first.
+    if (siteOrigin !== window.location.origin) {
+      const canonicalLogin = new URL("/login", siteOrigin);
+      canonicalLogin.searchParams.set("next", next);
+      window.location.assign(canonicalLogin);
+      return;
+    }
+
+    // redirectTo must exactly match an entry in Supabase's Redirect URLs
+    // allow-list, with no query string, or Supabase falls back to its Site URL
+    // (the main app). The post-login destination travels in a short-lived
+    // cookie that /auth/callback reads, validates, and clears.
     document.cookie = `${AUTH_NEXT_COOKIE}=${encodeURIComponent(next)}; path=/; max-age=600; samesite=lax`;
 
     const { error } = await createClient().auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: `${siteOrigin}/auth/callback` },
     });
     if (error) {
       setError(error.message);

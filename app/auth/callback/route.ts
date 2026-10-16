@@ -20,11 +20,11 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      return NextResponse.redirect(`${origin}${next}`);
+      return NextResponse.redirect(new URL(next, origin));
     }
   }
 
-  return NextResponse.redirect(`${origin}/login?error=auth`);
+  return NextResponse.redirect(new URL("/login?error=auth", origin));
 }
 
 function decodeCookie(value: string | undefined) {
@@ -36,9 +36,18 @@ function decodeCookie(value: string | undefined) {
   }
 }
 
-// Only allow same-origin admin paths to avoid open redirects.
+// Only allow paths inside this app's /admin area, never another host.
 function safeNext(next: string | null) {
-  return next && next.startsWith("/admin") && !next.startsWith("//")
-    ? next
-    : "/admin";
+  if (!next) return "/admin";
+  try {
+    const base = "http://localhost";
+    const url = new URL(next, base);
+    const inAdmin =
+      url.pathname === "/admin" || url.pathname.startsWith("/admin/");
+    return url.origin === base && inAdmin
+      ? `${url.pathname}${url.search}`
+      : "/admin";
+  } catch {
+    return "/admin";
+  }
 }
